@@ -16,7 +16,11 @@ const QTY_COLUMN_WIDTH = 88;
 const TOTAL_COLUMN_WIDTH = 180;
 const NAME_COLUMN_WIDTH =
   TABLE_WIDTH - TABLE_INSET * 2 - ICON_COLUMN_WIDTH - QTY_COLUMN_WIDTH - TOTAL_COLUMN_WIDTH - GRID_GAP * 3;
-const SHARE_LOGO_SRC = `${import.meta.env.BASE_URL}logo-tano-grale.png`;
+const SHARE_LOGO_SOURCES = [
+  `${import.meta.env.BASE_URL}logo-tano-grale.png`,
+  `${import.meta.env.BASE_URL}icon-512.png`,
+  `${import.meta.env.BASE_URL}apple-touch-icon.png`,
+];
 const FALLBACK_MESSAGE = "Olá! Segue sua comanda da Adega Tá no Grale.";
 const FOOTER_MESSAGE = "Sua comanda é individual e não pode ser transferida.";
 const NO_TABLE_LABEL = "Sem mesa";
@@ -110,6 +114,18 @@ const loadImage = (src: string) =>
     image.onerror = () => resolve(null);
     image.src = src;
   });
+
+const loadFirstImage = async (sources: string[]) => {
+  for (const source of sources) {
+    const image = await loadImage(source);
+
+    if (image) {
+      return image;
+    }
+  }
+
+  return null;
+};
 
 const iconMarkupToDataUrl = (visual: CategoryVisual) => {
   const markup = renderToStaticMarkup(
@@ -364,9 +380,9 @@ const drawInfoCard = (context: CanvasRenderingContext2D, order: Order, y: number
   fillRoundedRect(context, cardX, y, cardWidth, cardHeight, 24, "rgba(7, 10, 18, 0.86)");
   strokeRoundedRect(context, cardX, y, cardWidth, cardHeight, 24, borderGradient, 4);
 
-  const col1X = cardX + 76;
-  const col2X = cardX + 344;
-  const col3X = cardX + 616;
+  const col1X = cardX + 142;
+  const col2X = cardX + 425;
+  const col3X = cardX + 710;
   const dividerTop = y + 28;
   const dividerBottom = y + cardHeight - 28;
 
@@ -384,30 +400,36 @@ const drawInfoCard = (context: CanvasRenderingContext2D, order: Order, y: number
   drawText(context, "MESA", col1X, y + 31, {
     font: "800 27px Arial Black, sans-serif",
     color: "#bf63ff",
+    align: "center",
   });
   drawText(context, getMesaValue(order), col1X, y + 64, {
     font: "800 49px Arial Black, Impact, sans-serif",
     color: "#ffffff",
+    align: "center",
     shadow: true,
   });
 
   drawText(context, "DATA", col2X, y + 33, {
     font: "800 27px Arial Black, sans-serif",
     color: "#24cfff",
+    align: "center",
   });
   drawText(context, formatShareDate(order.openedAt), col2X, y + 73, {
     font: "800 32px Arial Black, sans-serif",
     color: "#ffffff",
+    align: "center",
     shadow: true,
   });
 
   drawText(context, "HORA", col3X, y + 33, {
     font: "800 27px Arial Black, sans-serif",
     color: "#24cfff",
+    align: "center",
   });
   drawText(context, formatShareTime(order.openedAt), col3X, y + 73, {
     font: "800 32px Arial Black, sans-serif",
     color: "#ffffff",
+    align: "center",
     shadow: true,
   });
 };
@@ -638,12 +660,23 @@ const drawFooter = (context: CanvasRenderingContext2D, y: number) => {
   fillRoundedRect(context, footerX, y, footerWidth, 104, 24, "rgba(255, 255, 255, 0.035)");
   strokeRoundedRect(context, footerX, y, footerWidth, 104, 24, "rgba(255, 255, 255, 0.1)", 2);
 
-  const lockX = footerX + 92;
+  const footerFont = "700 27px Arial, sans-serif";
+  context.save();
+  context.font = footerFont;
+  const textWidth = context.measureText(FOOTER_MESSAGE).width;
+  context.restore();
+
+  const lockWidth = 42;
+  const gap = 24;
+  const groupWidth = lockWidth + gap + textWidth;
+  const groupX = footerX + (footerWidth - groupWidth) / 2;
+  const lockX = groupX;
+  const textX = groupX + lockWidth + gap;
+
   drawLockIcon(context, lockX, y + 24);
-  drawText(context, FOOTER_MESSAGE, footerX + footerWidth / 2 + 52, y + 39, {
-    font: "700 27px Arial, sans-serif",
+  drawText(context, FOOTER_MESSAGE, textX, y + 39, {
+    font: footerFont,
     color: "#ffffff",
-    align: "center",
   });
 };
 
@@ -719,7 +752,7 @@ export const createOrderShareImageFile = async (order: Order, _legacyLogoSrc: st
   const canvasHeight = Math.max(MIN_IMAGE_HEIGHT, 520 + listHeight + 58 + totalsHeight + 148);
   const [{ canvas, context }, logo, iconImages] = await Promise.all([
     Promise.resolve(createScaledCanvas(canvasHeight)),
-    loadImage(SHARE_LOGO_SRC),
+    loadFirstImage(SHARE_LOGO_SOURCES),
     loadCategoryIconImages(rows),
   ]);
 
