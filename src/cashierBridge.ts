@@ -31,6 +31,16 @@ interface AuthResponse {
   message?: string;
 }
 
+type CashierEntryRow = {
+  id?: string;
+  date?: string;
+  amount_cents?: number | null;
+  payment?: "dinheiro" | "pix" | "credito" | "debito" | string | null;
+  description?: string | null;
+  entry_time?: string | null;
+  created_at?: string | null;
+};
+
 const normalizeUsername = (value: string) =>
   value
     .normalize("NFD")
@@ -113,7 +123,15 @@ const getOrderDescription = (order: Order) => {
 
 export const getCashierEntryId = (orderId: string) => `comanda-${orderId}`;
 
-const selectCashierEntryIds = async (params: URLSearchParams, session: CashierSession) => {
+const normalizeMatchText = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const selectCashierEntries = async (params: URLSearchParams, session: CashierSession) => {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/cash_entries?${params.toString()}`, {
     headers: {
       apikey: SUPABASE_PUBLISHABLE_KEY,
@@ -126,7 +144,11 @@ const selectCashierEntryIds = async (params: URLSearchParams, session: CashierSe
     throw new Error(data.message || data.error_description || "Não consegui consultar o caixa.");
   }
 
-  const rows = (await response.json().catch(() => [])) as Array<{ id?: string }>;
+  return (await response.json().catch(() => [])) as CashierEntryRow[];
+};
+
+const selectCashierEntryIds = async (params: URLSearchParams, session: CashierSession) => {
+  const rows = await selectCashierEntries(params, session);
   return rows.map((row) => row.id).filter(Boolean) as string[];
 };
 
@@ -262,6 +284,10 @@ export const findCashierEntryForOrder = async (order: Order, session: CashierSes
   const directIds = Array.from(
     new Set([order.payment?.cashierEntryId, getCashierEntryId(order.id)].filter(Boolean) as string[]),
   );
+  const entryTime = getOrderTime(order);
+  const payment = order.payment?.method ? paymentMap[order.payment.method] : "dinheiro";
+  const totalPaid = order.payment?.totalPaid ?? 0;
+  const description = getOrderDescription(order);
 
   let matches = directIds.length
     ? await selectCashierEntryIds(
@@ -276,10 +302,6 @@ export const findCashierEntryForOrder = async (order: Order, session: CashierSes
     : [];
 
   if (!matches.length) {
-    const entryTime = getOrderTime(order);
-    const payment = order.payment?.method ? paymentMap[order.payment.method] : "dinheiro";
-    const totalPaid = order.payment?.totalPaid ?? 0;
-
     matches = await selectCashierEntryIds(
       new URLSearchParams({
         select: "id",
@@ -288,11 +310,57 @@ export const findCashierEntryForOrder = async (order: Order, session: CashierSes
         amount_cents: `eq.${Math.round(totalPaid * 100)}`,
         payment: `eq.${payment}`,
         entry_time: `eq.${entryTime}`,
-        description: `eq.${getOrderDescription(order)}`,
+        description: `eq.${description}`,
         limit: "1",
       }),
       activeSession,
     );
+  }
+
+  if (!matches.length) {
+    const title = normalizeMatchText(getOrderTitle(order));
+    const customer = order.customer ? normalizeMatchText(order.customer) : "";
+    const itemNames = order.items.map((item) => normalizeMatchText(item.productName)).filter(Boolean);
+    const candidateRows = await selectCashierEntries(
+      new URLSearchParams({
+        select: "id,description,entry_time,created_at",
+        user_id: `eq.${activeSession.userId}`,
+        date: `eq.${getOrderDate(order)}`,
+        amount_cents: `eq.${Math.round(totalPaid * 100)}`,
+        payment: `eq.${payment}`,
+        limit: "50",
+      }),
+      activeSession,
+    );
+
+    const scoredRows = candidateRows
+      .filter((row) => row.id)
+      .map((row) => {
+        const normalizedDescription = normalizeMatchText(row.description ?? "");
+        const titleMatch = title && normalizedDescription.includes(title);
+        const customerMatch = customer && normalizedDescription.includes(customer);
+        const itemMatches = itemNames.filter((itemName) => normalizedDescription.includes(itemName)).length;
+        const timeMatch = row.entry_time === entryTime;
+        const exactDescription = normalizedDescription === normalizeMatchText(description);
+        const identityMatch = exactDescription || titleMatch || customerMatch || itemMatches > 0;
+        const score =
+          (exactDescription ? 100 : 0) +
+          (timeMatch ? 20 : 0) +
+          (titleMatch ? 10 : 0) +
+          (customerMatch ? 6 : 0) +
+          itemMatches;
+
+        return { row, score, identityMatch };
+      })
+      .filter(({ score, identityMatch }) => identityMatch && score >= 10)
+      .sort((first, second) => second.score - first.score);
+
+    const bestScore = scoredRows[0]?.score ?? 0;
+    const bestRows = scoredRows.filter((item) => item.score === bestScore);
+
+    if (bestRows.length === 1) {
+      matches = [bestRows[0].row.id as string];
+    }
   }
 
   return { session: activeSession, entryId: matches[0] ?? null };

@@ -452,7 +452,11 @@ textarea:focus {
 .command-header {
   position: relative;
   overflow: hidden;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: start;
+  justify-content: stretch;
+  gap: 12px;
   border: 3px solid var(--border-strong);
   border-radius: 8px;
   padding: 12px;
@@ -464,12 +468,19 @@ textarea:focus {
 
 .command-heading {
   min-width: 0;
-  flex: 1;
+  display: grid;
+  gap: 6px;
+}
+
+.command-heading h1 {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
 }
 
 .floating-total {
   min-width: 132px;
-  align-self: center;
+  align-self: start;
   border: 2px solid #030407;
   border-radius: 8px;
   padding: 10px 12px;
@@ -1878,25 +1889,29 @@ textarea:focus {
 
 .toast {
   position: fixed;
-  left: 16px;
-  right: 16px;
-  bottom: 94px;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 14px;
   z-index: 60;
-  min-height: 54px;
+  width: fit-content;
+  max-width: min(430px, calc(100% - 28px));
+  min-height: 38px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   border: 2px solid #030407;
   border-radius: 8px;
-  padding: 12px 16px;
+  padding: 8px 12px;
   color: var(--text);
   background:
     linear-gradient(135deg, rgba(20, 31, 49, 0.98), rgba(8, 13, 24, 0.98));
   box-shadow:
-    5px 6px 0 #030407,
-    var(--shadow);
+    3px 4px 0 #030407,
+    0 12px 30px rgba(0, 0, 0, 0.34);
+  font-size: 0.86rem;
   font-weight: 900;
-  text-align: center;
+  line-height: 1.25;
+  text-align: left;
+  overflow-wrap: anywhere;
   animation: toastIn 180ms ease-out both;
 }
 
@@ -1987,7 +2002,7 @@ textarea:focus {
 @keyframes toastIn {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(-8px);
   }
 }
 
@@ -2059,19 +2074,53 @@ textarea:focus {
 
 @media (max-width: 640px) {
   .command-header {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: 52px minmax(0, 1fr) 52px;
+    align-items: start;
+    gap: 12px;
+  }
+
+  .command-header > .icon-button {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .command-header > .danger-icon {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .command-heading {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
   }
 
   .command-header .floating-total {
+    grid-row: 2;
     grid-column: 1 / -1;
     width: 100%;
     text-align: left;
+  }
+
+  .command-heading h1 {
+    margin: 0;
+    line-height: 0.9;
   }
 }
 
 @media (max-width: 520px) {
   .app-main {
     padding-inline: 12px;
+  }
+
+  .toast {
+    left: 12px;
+    right: auto;
+    width: auto;
+    max-width: min(300px, calc(100% - 140px));
+    min-height: 36px;
+    padding: 7px 10px;
+    font-size: 0.8rem;
   }
 
   .date-pair {

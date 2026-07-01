@@ -55,6 +55,11 @@ import {
   mergeLocalWithCloud,
   syncComandaCloudState,
 } from "./comandaCloud";
+import {
+  createOrderShareImageFile,
+  downloadOrderShareImage,
+  getOrderShareFallbackMessage,
+} from "./OrderShareImage";
 import { loadState, saveState } from "./storage";
 import {
   CATEGORIES,
@@ -202,38 +207,51 @@ const dateRangesOverlap = (firstStart: string, firstEnd: string, secondStart: st
 const isPromotionalItem = (item: OrderItem) =>
   Boolean(item.promotion && (item.originalUnitPrice ?? item.promotion?.originalPrice ?? item.unitPrice) > item.unitPrice);
 
-const buildWhatsAppOrderMessage = (order: Order) => {
-  const totals = calculateOrderTotals(order);
-  const total = order.payment?.totalPaid ?? totals.total;
-  const lines = [
-    "*Adega Tá no Grale*",
-    order.status === "Fechada" ? "*Comanda fechada*" : "*Comanda aberta*",
-    "",
-    `${getOrderTitle(order)}`,
-    order.customer ? `Cliente: ${order.customer}` : null,
-    `Aberta em: ${formatDateTime(order.openedAt)}`,
-    order.closedAt ? `Fechada em: ${formatDateTime(order.closedAt)}` : null,
-    "",
-    "*Itens:*",
-    ...order.items.flatMap((item) => [
-      `${item.quantity}x ${item.productName} - ${formatCurrency(item.quantity * item.unitPrice)}`,
-      isPromotionalItem(item)
-        ? `Promoção: ${item.promotion?.name || "PROMOÇÃO"} (${formatCurrency(item.originalUnitPrice ?? item.promotion?.originalPrice ?? item.unitPrice)} por ${formatCurrency(item.unitPrice)})`
-        : null,
-      item.note ? `Obs: ${item.note}` : null,
-    ]),
-    "",
-    `Subtotal: ${formatCurrency(totals.subtotal)}`,
-    order.payment?.method ? `Pagamento: ${order.payment.method}` : null,
-    `Total: ${formatCurrency(total)}`,
-  ];
-
-  return lines.filter((line): line is string => Boolean(line)).join("\n");
+const openWhatsAppFallbackMessage = () => {
+  const message = encodeURIComponent(getOrderShareFallbackMessage());
+  window.open(`https://wa.me/?text=${message}`, "_blank", "noopener,noreferrer");
 };
 
-const shareOrderOnWhatsApp = (order: Order) => {
-  const message = encodeURIComponent(buildWhatsAppOrderMessage(order));
-  window.open(`https://wa.me/?text=${message}`, "_blank", "noopener,noreferrer");
+const canShareOrderImage = (file: File) => {
+  if (!navigator.share || !navigator.canShare) {
+    return false;
+  }
+
+  try {
+    return navigator.canShare({ files: [file] });
+  } catch {
+    return false;
+  }
+};
+
+const shareOrderOnWhatsApp = async (order: Order, notify: (kind: ToastKind, message: string) => void) => {
+  try {
+    const file = await createOrderShareImageFile(order, LOGO_SRC);
+
+    if (canShareOrderImage(file)) {
+      notify("info", "Escolha o WhatsApp para enviar a comanda.");
+
+      try {
+        await navigator.share({
+          files: [file],
+          title: "Comanda Adega Tá no Grale",
+          text: getOrderShareFallbackMessage(),
+        });
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    downloadOrderShareImage(file);
+    notify("info", "A imagem foi baixada. Anexe-a na conversa do WhatsApp.");
+    openWhatsAppFallbackMessage();
+  } catch {
+    notify("error", "Não consegui gerar a imagem. Abri o WhatsApp com a mensagem.");
+    openWhatsAppFallbackMessage();
+  }
 };
 
 const getLocalDayRange = (dateValue: string) => {
@@ -1124,6 +1142,11 @@ function App() {
         try {
           const result = await deleteCashierEntryForOrder(order, cashierSession);
           setCashierSession(result.session);
+
+          if (!result.deleted) {
+            showToast("error", "Não encontrei esse registro no caixa. Atualize os dois apps e tente excluir de novo.");
+            return;
+          }
         } catch (error) {
           showToast("error", `Não apaguei a comanda porque o caixa não confirmou: ${getCashierErrorMessage(error)}`);
           return;
@@ -1163,6 +1186,7 @@ function App() {
           }
           onCloseOrder={openCloseOrder}
           onDeleteOrder={() => deleteOpenOrder(selectedOrder)}
+          onShareOrder={(order) => void shareOrderOnWhatsApp(order, showToast)}
         />
       );
     }
@@ -1173,6 +1197,7 @@ function App() {
           order={selectedHistory}
           onBack={() => setSelectedHistoryId(null)}
           onDelete={() => deleteHistoryOrder(selectedHistory)}
+          onShareOrder={(order) => void shareOrderOnWhatsApp(order, showToast)}
         />
       );
     }
@@ -1578,6 +1603,7 @@ interface OrderDetailsProps {
   onAskRemoveItem: (item: OrderItem) => void;
   onCloseOrder: () => void;
   onDeleteOrder: () => void;
+  onShareOrder: (order: Order) => void;
 }
 
 function OrderDetails({
@@ -1589,6 +1615,7 @@ function OrderDetails({
   onAskRemoveItem,
   onCloseOrder,
   onDeleteOrder,
+  onShareOrder,
 }: OrderDetailsProps) {
   return (
     <section className="screen detail-screen">
@@ -1616,7 +1643,7 @@ function OrderDetails({
       </header>
 
       <div className="detail-actions-row">
-        <button className="whatsapp-action" onClick={() => shareOrderOnWhatsApp(order)}>
+        <button className="whatsapp-action" onClick={() => onShareOrder(order)}>
           <MessageCircle size={21} />
           Compartilhar no WhatsApp
         </button>
@@ -2028,8 +2055,7 @@ function ProductsScreen({
         <div className="screen-heading">
           <img src={LOGO_SRC} alt="Adega Tá no Grale" className="header-logo" />
           <div>
-          <span className="eyebrow">{activeSection === "products" ? "Cadastro" : "Ofertas"}</span>
-          <h1>{activeSection === "products" ? "Produtos" : "Promoções"}</h1>
+            <h1>{activeSection === "products" ? "Produtos" : "Promoções"}</h1>
           </div>
         </div>
         {activeSection === "products" ? (
@@ -2371,8 +2397,7 @@ function HistoryScreen({
         <div className="screen-heading">
           <img src={LOGO_SRC} alt="Adega Tá no Grale" className="header-logo" />
           <div>
-          <span className="eyebrow">Fechadas</span>
-          <h1>Histórico</h1>
+            <h1>Histórico</h1>
           </div>
         </div>
       </header>
@@ -2437,9 +2462,10 @@ interface HistoryDetailsProps {
   order: Order;
   onBack: () => void;
   onDelete: () => void;
+  onShareOrder: (order: Order) => void;
 }
 
-function HistoryDetails({ order, onBack, onDelete }: HistoryDetailsProps) {
+function HistoryDetails({ order, onBack, onDelete, onShareOrder }: HistoryDetailsProps) {
   const totals = calculateOrderTotals(order);
   const promotionalItems = order.items.filter(isPromotionalItem);
 
@@ -2465,7 +2491,7 @@ function HistoryDetails({ order, onBack, onDelete }: HistoryDetailsProps) {
       </header>
 
       <div className="detail-actions-row">
-        <button className="whatsapp-action" onClick={() => shareOrderOnWhatsApp(order)}>
+        <button className="whatsapp-action" onClick={() => onShareOrder(order)}>
           <MessageCircle size={21} />
           Compartilhar no WhatsApp
         </button>
