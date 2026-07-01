@@ -3,9 +3,7 @@ import type { FormEvent, ReactNode } from "react";
 import {
   ArrowLeft,
   Banknote,
-  Beer,
   BadgeCheck,
-  Candy,
   Check,
   ChevronRight,
   CircleDollarSign,
@@ -14,8 +12,6 @@ import {
   Clock3,
   CreditCard,
   Edit3,
-  CupSoda,
-  GlassWater,
   KeyRound,
   Link2,
   LogOut,
@@ -31,8 +27,6 @@ import {
   Tag,
   Trash2,
   UserRound,
-  Utensils,
-  Wine,
   X,
 } from "lucide-react";
 import {
@@ -55,6 +49,7 @@ import {
   mergeLocalWithCloud,
   syncComandaCloudState,
 } from "./comandaCloud";
+import { categoryVisuals } from "./categoryVisuals";
 import {
   createOrderShareImageFile,
   downloadOrderShareImage,
@@ -98,7 +93,6 @@ type PromotionDraft = {
   onlyToday: boolean;
   active: boolean;
 };
-type CategoryVisual = { icon: typeof Beer; className: string; label: string };
 type CashierLoginDraft = { username: string; pin: string };
 
 interface ToastState {
@@ -149,16 +143,6 @@ const rememberDeletedOrderIds = (userId: string | undefined, orderIds: string[])
   const mergedIds = Array.from(new Set([...(store[key] ?? []), ...orderIds])).slice(-500);
 
   localStorage.setItem(DELETED_ORDER_IDS_KEY, JSON.stringify({ ...store, [key]: mergedIds }));
-};
-
-const categoryVisuals: Record<Category, CategoryVisual> = {
-  "Cerveja Lata": { icon: Beer, className: "category-cerveja-lata", label: "Lata" },
-  "Cerveja Long Neck": { icon: Wine, className: "category-cerveja-long-neck", label: "Long neck" },
-  "Cerveja Garrafa": { icon: GlassWater, className: "category-cerveja-garrafa", label: "Garrafa" },
-  "Não Alcoolicos": { icon: CupSoda, className: "category-nao-alcoolicos", label: "Sem álcool" },
-  Guloseimas: { icon: Candy, className: "category-guloseimas", label: "Doce" },
-  Petiscos: { icon: Utensils, className: "category-petiscos", label: "Petiscos" },
-  Outros: { icon: Package, className: "category-outros", label: "Geral" },
 };
 
 const getOrderTitle = (order: Order) =>
