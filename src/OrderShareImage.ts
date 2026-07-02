@@ -21,9 +21,37 @@ const SHARE_LOGO_SOURCES = [
   `${import.meta.env.BASE_URL}icon-512.png`,
   `${import.meta.env.BASE_URL}apple-touch-icon.png`,
 ];
+const RECEIPT_ASSET_SOURCES = {
+  background: `${import.meta.env.BASE_URL}receipt-bg-aurora.png`,
+  logo: `${import.meta.env.BASE_URL}receipt-logo.jpg`,
+  calendar: `${import.meta.env.BASE_URL}receipt-icon-calendar.png`,
+  customer: `${import.meta.env.BASE_URL}receipt-icon-customer.png`,
+  table: `${import.meta.env.BASE_URL}receipt-icon-table.png`,
+  titleBand: `${import.meta.env.BASE_URL}receipt-band-title.png`,
+  thanksBand: `${import.meta.env.BASE_URL}receipt-band-thanks.png`,
+};
 const FALLBACK_MESSAGE = "Olá! Segue sua comanda da Adega Tá no Grale.";
 const FOOTER_MESSAGE = "Sua comanda é individual e não pode ser transferida.";
 const NO_TABLE_LABEL = "Sem mesa";
+const RECEIPT_MIN_HEIGHT = 1580;
+const RECEIPT_CARD_X = 58;
+const RECEIPT_CARD_TOP = 32;
+const RECEIPT_CARD_WIDTH = IMAGE_WIDTH - RECEIPT_CARD_X * 2;
+const RECEIPT_INSET = 32;
+const RECEIPT_NAVY = "#061b3f";
+const RECEIPT_BLUE = "#1164b6";
+const RECEIPT_LIGHT_BLUE = "#eaf6ff";
+const RECEIPT_DASH = "rgba(17, 100, 182, 0.42)";
+const RECEIPT_PRODUCT_WIDTH = 492;
+const RECEIPT_LOGO_Y = 50;
+const RECEIPT_LOGO_WIDTH = 440;
+const RECEIPT_LOGO_HEIGHT = 318;
+const RECEIPT_TITLE_Y = 382;
+const RECEIPT_TITLE_HEIGHT = 94;
+const RECEIPT_INFO_Y = 518;
+const RECEIPT_TOTAL_HEIGHT = 86;
+const RECEIPT_META_LABEL_FONT = "800 25px 'Arial Narrow', Arial, sans-serif";
+const RECEIPT_META_VALUE_FONT = "700 25px 'Arial Narrow', Arial, sans-serif";
 
 type TextLayout = {
   font: string;
@@ -38,6 +66,23 @@ type MeasuredItemRow = {
   detailLines: string[];
   noteLines: string[];
   height: number;
+};
+
+type ReceiptItemRow = {
+  item: OrderItem;
+  productLines: string[];
+  detailLines: string[];
+  height: number;
+};
+
+type ReceiptAssets = {
+  background: HTMLImageElement | null;
+  logo: HTMLImageElement | null;
+  calendar: HTMLImageElement | null;
+  customer: HTMLImageElement | null;
+  table: HTMLImageElement | null;
+  titleBand: HTMLImageElement | null;
+  thanksBand: HTMLImageElement | null;
 };
 
 const isPromotionalItem = (item: OrderItem) => {
@@ -61,6 +106,23 @@ const getMesaValue = (order: Order) => {
 };
 
 const getOriginalPrice = (item: OrderItem) => item.originalUnitPrice ?? item.promotion?.originalPrice ?? item.unitPrice;
+
+const isPaidReceipt = (order: Order) => order.status === "Fechada";
+
+const getReceiptDateSource = (order: Order) => order.closedAt || order.openedAt;
+
+const getReceiptNumber = (order: Order) => {
+  const source = order.payment?.cashierEntryId || order.id;
+  const cleaned = source
+    .replace(/^comanda-/i, "")
+    .replace(/^cash-/i, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toUpperCase();
+
+  return `#${(cleaned || source).slice(-6).padStart(6, "0")}`;
+};
+
+const getPaymentMethodLabel = (order: Order) => order.payment?.method || "";
 
 const formatShareDate = (isoDate: string) =>
   new Intl.DateTimeFormat("pt-BR", {
@@ -125,6 +187,20 @@ const loadFirstImage = async (sources: string[]) => {
   }
 
   return null;
+};
+
+const loadReceiptAssets = async (): Promise<ReceiptAssets> => {
+  const [background, logo, calendar, customer, table, titleBand, thanksBand] = await Promise.all([
+    loadImage(RECEIPT_ASSET_SOURCES.background),
+    loadImage(RECEIPT_ASSET_SOURCES.logo),
+    loadImage(RECEIPT_ASSET_SOURCES.calendar),
+    loadImage(RECEIPT_ASSET_SOURCES.customer),
+    loadImage(RECEIPT_ASSET_SOURCES.table),
+    loadImage(RECEIPT_ASSET_SOURCES.titleBand),
+    loadImage(RECEIPT_ASSET_SOURCES.thanksBand),
+  ]);
+
+  return { background, logo, calendar, customer, table, titleBand, thanksBand };
 };
 
 const iconMarkupToDataUrl = (visual: CategoryVisual) => {
@@ -247,6 +323,19 @@ const measureRows = (context: CanvasRenderingContext2D, order: Order): MeasuredI
     return { item, visual, name, detailLines, noteLines, height };
   });
 
+const measureReceiptRows = (context: CanvasRenderingContext2D, order: Order): ReceiptItemRow[] =>
+  order.items.map((item) => {
+    const productLines = wrapText(context, item.productName, RECEIPT_PRODUCT_WIDTH, "700 27px Arial, sans-serif");
+    const detailText = isPromotionalItem(item)
+      ? `Promo\u00e7\u00e3o: ${formatCurrency(getOriginalPrice(item))} por ${formatCurrency(item.unitPrice)}`
+      : "";
+    const detailLines = detailText ? wrapText(context, detailText, RECEIPT_PRODUCT_WIDTH, "600 20px Arial, sans-serif") : [];
+    const rowTextHeight = productLines.length * 32 + detailLines.length * 24;
+    const height = Math.max(66, rowTextHeight + 22);
+
+    return { item, productLines, detailLines, height };
+  });
+
 const makeRoundedRect = (
   context: CanvasRenderingContext2D,
   x: number,
@@ -348,6 +437,42 @@ const drawContainImage = (
   const drawY = y + (height - drawHeight) / 2;
 
   context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+};
+
+const drawCoverImage = (
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) => {
+  const scale = Math.max(width / image.width, height / image.height);
+  const sourceWidth = width / scale;
+  const sourceHeight = height / scale;
+  const sourceX = (image.width - sourceWidth) / 2;
+  const sourceY = (image.height - sourceHeight) / 2;
+
+  context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height);
+};
+
+const drawCroppedImage = (
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  source: { x: number; y: number; width: number; height: number },
+  target: { x: number; y: number; width: number; height: number },
+) => {
+  context.drawImage(
+    image,
+    source.x,
+    source.y,
+    source.width,
+    source.height,
+    target.x,
+    target.y,
+    target.width,
+    target.height,
+  );
 };
 
 const drawHeaderLogo = (context: CanvasRenderingContext2D, logo: HTMLImageElement | null) => {
@@ -703,6 +828,687 @@ const drawBackground = (context: CanvasRenderingContext2D, canvasHeight: number)
   fillRoundedRect(context, 34, 28, IMAGE_WIDTH - 68, canvasHeight - 56, 30, "rgba(255, 255, 255, 0.025)");
 };
 
+const drawReceiptMountains = (context: CanvasRenderingContext2D, canvasHeight: number) => {
+  context.save();
+  context.globalAlpha = 0.72;
+  context.fillStyle = "#bfeeff";
+
+  const baseY = canvasHeight - 150;
+  context.beginPath();
+  context.moveTo(0, canvasHeight);
+  context.lineTo(0, baseY + 34);
+  context.lineTo(88, baseY - 18);
+  context.lineTo(154, baseY + 22);
+  context.lineTo(238, baseY - 56);
+  context.lineTo(330, baseY + 42);
+  context.lineTo(420, baseY - 4);
+  context.lineTo(520, canvasHeight);
+  context.closePath();
+  context.fill();
+
+  context.beginPath();
+  context.moveTo(560, canvasHeight);
+  context.lineTo(650, baseY + 28);
+  context.lineTo(730, baseY - 48);
+  context.lineTo(824, baseY + 34);
+  context.lineTo(924, baseY - 26);
+  context.lineTo(1080, baseY + 72);
+  context.lineTo(1080, canvasHeight);
+  context.closePath();
+  context.fill();
+
+  context.globalAlpha = 0.92;
+  context.fillStyle = "#ffffff";
+  context.beginPath();
+  context.moveTo(196, baseY - 18);
+  context.lineTo(238, baseY - 56);
+  context.lineTo(276, baseY - 16);
+  context.closePath();
+  context.fill();
+
+  context.beginPath();
+  context.moveTo(688, baseY - 10);
+  context.lineTo(730, baseY - 48);
+  context.lineTo(768, baseY - 8);
+  context.closePath();
+  context.fill();
+  context.restore();
+};
+
+const drawReceiptBackground = (
+  context: CanvasRenderingContext2D,
+  canvasHeight: number,
+  backgroundImage?: HTMLImageElement | null,
+) => {
+  if (backgroundImage) {
+    drawCoverImage(context, backgroundImage, 0, 0, IMAGE_WIDTH, canvasHeight);
+  } else {
+    const background = context.createLinearGradient(0, 0, IMAGE_WIDTH, canvasHeight);
+    background.addColorStop(0, "#020817");
+    background.addColorStop(0.44, "#071f46");
+    background.addColorStop(1, "#031126");
+    context.fillStyle = background;
+    context.fillRect(0, 0, IMAGE_WIDTH, canvasHeight);
+    drawReceiptMountains(context, canvasHeight);
+  }
+
+  context.save();
+  context.shadowColor = "rgba(0, 0, 0, 0.38)";
+  context.shadowBlur = 30;
+  context.shadowOffsetY = 14;
+  const cardGradient = context.createLinearGradient(RECEIPT_CARD_X, RECEIPT_CARD_TOP, RECEIPT_CARD_X, canvasHeight - 34);
+  cardGradient.addColorStop(0, "#ffffff");
+  cardGradient.addColorStop(0.65, "#fbfdff");
+  cardGradient.addColorStop(1, "#eaf6ff");
+  fillRoundedRect(
+    context,
+    RECEIPT_CARD_X,
+    RECEIPT_CARD_TOP,
+    RECEIPT_CARD_WIDTH,
+    canvasHeight - RECEIPT_CARD_TOP * 2,
+    36,
+    cardGradient,
+  );
+  context.restore();
+};
+
+const drawReceiptLogo = (context: CanvasRenderingContext2D, logo: HTMLImageElement | null) => {
+  if (!logo) {
+    drawText(context, "ADEGA T\u00c1 NO GRALE", IMAGE_WIDTH / 2, 86, {
+      font: "800 60px Arial Black, Impact, sans-serif",
+      color: "#ffbf24",
+      align: "center",
+    });
+    return;
+  }
+
+  context.save();
+  context.shadowColor = "rgba(0, 0, 0, 0.28)";
+  context.shadowBlur = 9;
+  context.shadowOffsetY = 5;
+  drawContainImage(
+    context,
+    logo,
+    (IMAGE_WIDTH - RECEIPT_LOGO_WIDTH) / 2,
+    RECEIPT_LOGO_Y,
+    RECEIPT_LOGO_WIDTH,
+    RECEIPT_LOGO_HEIGHT,
+  );
+  context.restore();
+};
+
+const drawReceiptCheck = (context: CanvasRenderingContext2D, x: number, y: number, size: number, color = "#ffffff") => {
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = 6;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.beginPath();
+  context.arc(x + size / 2, y + size / 2, size / 2 - 5, 0, Math.PI * 2);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(x + size * 0.29, y + size * 0.52);
+  context.lineTo(x + size * 0.45, y + size * 0.68);
+  context.lineTo(x + size * 0.74, y + size * 0.34);
+  context.stroke();
+  context.restore();
+};
+
+const drawReceiptTitleBandImage = (
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement | null,
+  y: number,
+  height: number,
+) => {
+  if (!image) {
+    drawReceiptBrushBand(context, y, "COMPROVANTE DE COMANDA", height);
+    return y + height;
+  }
+
+  const source = { x: 0, y: image.height * 0.4, width: image.width, height: image.height * 0.18 };
+  const width = Math.min(RECEIPT_CARD_WIDTH - 150, 805);
+  const drawHeight = width * (source.height / source.width);
+  const x = (IMAGE_WIDTH - width) / 2;
+  drawCroppedImage(
+    context,
+    image,
+    source,
+    { x, y, width, height: drawHeight },
+  );
+
+  return y + drawHeight;
+};
+
+const drawReceiptThanksBandImage = (
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement | null,
+  y: number,
+  height: number,
+) => {
+  if (!image) {
+    drawReceiptBrushBand(context, y, "OBRIGADO E VOLTE SEMPRE!", height);
+    return y + height;
+  }
+
+  const source = { x: 0, y: image.height * 0.28, width: image.width, height: image.height * 0.4 };
+  const width = Math.min(RECEIPT_CARD_WIDTH - 155, 810);
+  const drawHeight = width * (source.height / source.width);
+  const x = (IMAGE_WIDTH - width) / 2;
+  drawCroppedImage(
+    context,
+    image,
+    source,
+    { x, y, width, height: drawHeight },
+  );
+
+  return y + drawHeight;
+};
+
+const drawReceiptBrushBand = (context: CanvasRenderingContext2D, y: number, text: string, height = 76) => {
+  const x = RECEIPT_CARD_X + 34;
+  const width = RECEIPT_CARD_WIDTH - 68;
+  const fontSize = height <= 66 ? 38 : 40;
+  const checkSize = height <= 66 ? 44 : 50;
+
+  context.save();
+  context.fillStyle = RECEIPT_NAVY;
+  context.beginPath();
+  context.moveTo(x, y + 15);
+  context.lineTo(x + 58, y + 6);
+  context.lineTo(x + width - 42, y + 2);
+  context.lineTo(x + width, y + 15);
+  context.lineTo(x + width - 18, y + height - 11);
+  context.lineTo(x + 42, y + height - 4);
+  context.lineTo(x + 4, y + height - 18);
+  context.closePath();
+  context.fill();
+  context.restore();
+
+  drawReceiptCheck(context, x + 96, y + (height - checkSize) / 2, checkSize);
+  drawText(context, text, x + width / 2 + 34, y + (height - fontSize) / 2 - 1, {
+    font: `800 ${fontSize}px Impact, Arial Black, sans-serif`,
+    color: "#ffffff",
+    align: "center",
+  });
+};
+
+const drawReceiptDashedLine = (
+  context: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  color = RECEIPT_DASH,
+) => {
+  context.save();
+  context.strokeStyle = color;
+  context.lineWidth = 1.15;
+  context.globalAlpha = 0.62;
+  context.setLineDash([7, 9]);
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+  context.restore();
+};
+
+const drawReceiptIcon = (context: CanvasRenderingContext2D, kind: string, x: number, y: number) => {
+  context.save();
+  context.strokeStyle = RECEIPT_BLUE;
+  context.lineWidth = 4;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+
+  if (kind === "calendar") {
+    makeRoundedRect(context, x, y + 5, 42, 42, 5);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(x + 10, y);
+    context.lineTo(x + 10, y + 12);
+    context.moveTo(x + 32, y);
+    context.lineTo(x + 32, y + 12);
+    context.moveTo(x, y + 19);
+    context.lineTo(x + 42, y + 19);
+    context.stroke();
+  } else if (kind === "clock") {
+    context.beginPath();
+    context.arc(x + 22, y + 25, 21, 0, Math.PI * 2);
+    context.moveTo(x + 22, y + 25);
+    context.lineTo(x + 22, y + 12);
+    context.moveTo(x + 22, y + 25);
+    context.lineTo(x + 33, y + 31);
+    context.stroke();
+  } else if (kind === "receipt") {
+    makeRoundedRect(context, x + 4, y + 2, 36, 48, 4);
+    context.stroke();
+    [14, 24, 34].forEach((lineY) => {
+      context.beginPath();
+      context.moveTo(x + 13, y + lineY);
+      context.lineTo(x + 31, y + lineY);
+      context.stroke();
+    });
+  } else if (kind === "table") {
+    context.beginPath();
+    context.moveTo(x + 7, y + 12);
+    context.lineTo(x + 39, y + 12);
+    context.moveTo(x + 10, y + 12);
+    context.lineTo(x + 10, y + 50);
+    context.moveTo(x + 36, y + 12);
+    context.lineTo(x + 36, y + 50);
+    context.moveTo(x + 7, y + 34);
+    context.lineTo(x + 39, y + 34);
+    context.stroke();
+  } else if (kind === "user") {
+    context.beginPath();
+    context.arc(x + 23, y + 16, 14, 0, Math.PI * 2);
+    context.moveTo(x + 4, y + 51);
+    context.quadraticCurveTo(x + 23, y + 32, x + 42, y + 51);
+    context.stroke();
+  } else if (kind === "card") {
+    makeRoundedRect(context, x, y + 8, 48, 36, 5);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(x, y + 20);
+    context.lineTo(x + 48, y + 20);
+    context.moveTo(x + 9, y + 34);
+    context.lineTo(x + 22, y + 34);
+    context.stroke();
+  } else {
+    drawReceiptCheck(context, x, y + 2, 48, RECEIPT_BLUE);
+  }
+
+  context.restore();
+};
+
+const drawReceiptAssetIcon = (
+  context: CanvasRenderingContext2D,
+  kind: string,
+  x: number,
+  y: number,
+  assets?: ReceiptAssets,
+) => {
+  const iconSize = 48;
+  const iconImage = kind === "calendar" ? assets?.calendar : kind === "user" ? assets?.customer : assets?.table;
+
+  if (!iconImage) {
+    drawReceiptIcon(context, kind, x + 3, y + 2);
+    return;
+  }
+
+  const crops: Record<string, { x: number; y: number; width: number; height: number }> = {
+    calendar: {
+      x: iconImage.width * 0.22,
+      y: iconImage.height * 0.3,
+      width: iconImage.width * 0.58,
+      height: iconImage.height * 0.42,
+    },
+    user: {
+      x: iconImage.width * 0.24,
+      y: iconImage.height * 0.31,
+      width: iconImage.width * 0.52,
+      height: iconImage.height * 0.38,
+    },
+    table: {
+      x: iconImage.width * 0.24,
+      y: iconImage.height * 0.2,
+      width: iconImage.width * 0.54,
+      height: iconImage.height * 0.58,
+    },
+  };
+
+  drawCroppedImage(
+    context,
+    iconImage,
+    crops[kind] ?? { x: 0, y: 0, width: iconImage.width, height: iconImage.height },
+    { x, y, width: iconSize, height: iconSize },
+  );
+};
+
+const drawReceiptInfoCell = (
+  context: CanvasRenderingContext2D,
+  kind: string,
+  label: string,
+  value: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  assets?: ReceiptAssets,
+) => {
+  void width;
+  const contentY = y + (height - 86) / 2;
+
+  drawReceiptAssetIcon(context, kind, x + 16, contentY + 19, assets);
+  drawText(context, label, x + 88, contentY + 21, {
+    font: RECEIPT_META_LABEL_FONT,
+    color: RECEIPT_NAVY,
+  });
+  drawText(context, value, x + 88, contentY + 52, {
+    font: RECEIPT_META_VALUE_FONT,
+    color: "#071126",
+  });
+};
+
+const getReceiptCustomer = (order: Order) => {
+  const customer = order.customer?.trim();
+  return customer && customer !== getOrderTitle(order) ? customer : "";
+};
+
+const drawReceiptInfo = (context: CanvasRenderingContext2D, order: Order, y: number) => {
+  const infoX = RECEIPT_CARD_X + RECEIPT_INSET;
+  const infoWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
+  const columnWidth = infoWidth / 2;
+  const rowHeight = 86;
+  const receiptDate = getReceiptDateSource(order);
+  const customer = getReceiptCustomer(order);
+  const cells = [
+    { kind: "calendar", label: "DATA:", value: formatShareDate(receiptDate) },
+    { kind: "clock", label: "HORA:", value: formatShareTime(receiptDate) },
+    { kind: "receipt", label: "N\u00ba COMANDA:", value: getReceiptNumber(order) },
+    { kind: "table", label: "MESA:", value: getMesaValue(order) },
+    ...(customer ? [{ kind: "user", label: "CLIENTE:", value: customer }] : []),
+  ];
+
+  cells.forEach((cell, index) => {
+    const isLastOdd = cells.length % 2 === 1 && index === cells.length - 1;
+    const row = Math.floor(index / 2);
+    const col = index % 2;
+    const cellX = isLastOdd ? infoX : infoX + col * columnWidth;
+    const cellY = y + row * rowHeight;
+    const cellWidth = isLastOdd ? infoWidth : columnWidth;
+
+    if (col === 1 && !isLastOdd) {
+      drawReceiptDashedLine(context, cellX, cellY + 10, cellX, cellY + rowHeight - 10);
+    }
+
+    drawReceiptInfoCell(context, cell.kind, cell.label, cell.value, cellX, cellY, cellWidth, rowHeight);
+  });
+
+  return y + Math.ceil(cells.length / 2) * rowHeight;
+};
+
+const drawReceiptTable = (context: CanvasRenderingContext2D, rows: ReceiptItemRow[], y: number) => {
+  const tableX = RECEIPT_CARD_X + RECEIPT_INSET;
+  const tableWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
+  const headerHeight = 54;
+  const qtyX = tableX + 52;
+  const productX = tableX + 120;
+  const totalRight = tableX + tableWidth - 42;
+  const headerY = y;
+
+  context.save();
+  context.fillStyle = RECEIPT_NAVY;
+  context.beginPath();
+  context.moveTo(tableX, headerY + 8);
+  context.lineTo(tableX + tableWidth, headerY + 2);
+  context.lineTo(tableX + tableWidth - 10, headerY + headerHeight - 8);
+  context.lineTo(tableX + 8, headerY + headerHeight - 2);
+  context.closePath();
+  context.fill();
+  context.restore();
+
+  drawText(context, "QTD.", qtyX, y + 14, {
+    font: "italic 800 24px 'Arial Narrow', Arial, sans-serif",
+    color: "#ffffff",
+    align: "center",
+  });
+  drawText(context, "PRODUTO", productX, y + 14, {
+    font: "italic 800 24px 'Arial Narrow', Arial, sans-serif",
+    color: "#ffffff",
+  });
+  drawText(context, "TOTAL", totalRight, y + 14, {
+    font: "italic 800 24px 'Arial Narrow', Arial, sans-serif",
+    color: "#ffffff",
+    align: "right",
+  });
+
+  let rowY = y + headerHeight;
+
+  rows.forEach((row) => {
+    const textTop = rowY + 18;
+    const numberY = rowY + row.height / 2;
+
+    drawText(context, String(row.item.quantity), qtyX, numberY, {
+      font: "700 28px 'Arial Narrow', Arial, sans-serif",
+      color: "#071126",
+      align: "center",
+      baseline: "middle",
+    });
+
+    let productY = textTop;
+    row.productLines.forEach((line) => {
+      drawText(context, line, productX, productY, {
+        font: "700 28px 'Arial Narrow', Arial, sans-serif",
+        color: "#071126",
+      });
+      productY += 32;
+    });
+
+    row.detailLines.forEach((line) => {
+      drawText(context, line, productX, productY, {
+        font: "600 20px Arial, sans-serif",
+        color: RECEIPT_BLUE,
+      });
+      productY += 24;
+    });
+
+    drawText(context, formatCurrency(row.item.unitPrice * row.item.quantity), totalRight, numberY, {
+      font: "700 27px 'Arial Narrow', Arial, sans-serif",
+      color: "#071126",
+      align: "right",
+      baseline: "middle",
+    });
+
+    rowY += row.height;
+    drawReceiptDashedLine(context, tableX, rowY, tableX + tableWidth, rowY);
+  });
+
+  return rowY;
+};
+
+const drawReceiptTotal = (context: CanvasRenderingContext2D, order: Order, y: number) => {
+  const totals = calculateOrderTotals(order);
+  const total = order.payment?.totalPaid ?? totals.total;
+  const boxX = RECEIPT_CARD_X + RECEIPT_INSET;
+  const boxWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
+  const boxHeight = RECEIPT_TOTAL_HEIGHT;
+
+  fillRoundedRect(context, boxX, y, boxWidth, boxHeight, 12, RECEIPT_LIGHT_BLUE);
+  strokeRoundedRect(context, boxX, y, boxWidth, boxHeight, 12, RECEIPT_BLUE, 2.5);
+  drawText(context, "TOTAL DA COMANDA:", boxX + 46, y + boxHeight / 2, {
+    font: "800 32px 'Arial Narrow', Arial, sans-serif",
+    color: RECEIPT_NAVY,
+    baseline: "middle",
+  });
+  drawText(context, formatCurrency(total), boxX + boxWidth - 42, y + boxHeight / 2, {
+    font: "800 56px 'Arial Narrow', Arial, sans-serif",
+    color: RECEIPT_BLUE,
+    align: "right",
+    baseline: "middle",
+  });
+
+  return y + boxHeight;
+};
+
+const drawReceiptPayment = (context: CanvasRenderingContext2D, order: Order, y: number) => {
+  const payment = getPaymentMethodLabel(order);
+  const boxX = RECEIPT_CARD_X + RECEIPT_INSET;
+  const boxWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
+  const columnWidth = boxWidth / 2;
+  const height = 94;
+
+  drawReceiptDashedLine(context, boxX, y, boxX + boxWidth, y);
+
+  if (payment) {
+    drawReceiptIcon(context, "card", boxX + 28, y + 23);
+    drawText(context, "FORMA DE PAGAMENTO:", boxX + 104, y + 25, {
+      font: "900 24px Arial Black, sans-serif",
+      color: RECEIPT_NAVY,
+    });
+    drawText(context, payment, boxX + 104, y + 56, {
+      font: "700 25px Arial, sans-serif",
+      color: "#071126",
+    });
+  }
+
+  drawReceiptDashedLine(context, boxX + columnWidth, y + 14, boxX + columnWidth, y + height - 16);
+  drawReceiptCheck(context, boxX + columnWidth + 42, y + 22, 52, RECEIPT_BLUE);
+  drawText(context, "SITUA\u00c7\u00c3O:", boxX + columnWidth + 118, y + 25, {
+    font: "900 24px Arial Black, sans-serif",
+    color: RECEIPT_NAVY,
+  });
+  drawText(context, "PAGO", boxX + columnWidth + 118, y + 56, {
+    font: "900 25px Arial Black, sans-serif",
+    color: "#118b2d",
+  });
+
+  return y + height;
+};
+
+const drawReceiptFooter = (context: CanvasRenderingContext2D, y: number) => {
+  drawReceiptBrushBand(context, y, "OBRIGADO E VOLTE SEMPRE!", 64);
+  return y + 64;
+};
+
+const drawPaidReceipt = (
+  context: CanvasRenderingContext2D,
+  order: Order,
+  receiptRows: ReceiptItemRow[],
+  logo: HTMLImageElement | null,
+  canvasHeight: number,
+) => {
+  drawReceiptBackground(context, canvasHeight);
+  drawReceiptLogo(context, logo);
+  drawReceiptBrushBand(context, 558, "COMPROVANTE DE COMANDA", 76);
+
+  const infoBottom = drawReceiptInfo(context, order, 684);
+  const tableBottom = drawReceiptTable(context, receiptRows, infoBottom + 28);
+  const totalBottom = drawReceiptTotal(context, order, tableBottom + 28);
+  const paymentBottom = drawReceiptPayment(context, order, totalBottom + 24);
+  drawReceiptFooter(context, paymentBottom + 24);
+};
+
+const measurePaidReceiptRows = (context: CanvasRenderingContext2D, order: Order): ReceiptItemRow[] =>
+  order.items.map((item) => {
+    const productLines = wrapText(context, item.productName, RECEIPT_PRODUCT_WIDTH, "700 27px Arial, sans-serif");
+    const detailText = isPromotionalItem(item)
+      ? `Promo\u00e7\u00e3o: ${formatCurrency(getOriginalPrice(item))} por ${formatCurrency(item.unitPrice)}`
+      : "";
+    const detailLines = detailText ? wrapText(context, detailText, RECEIPT_PRODUCT_WIDTH, "600 20px Arial, sans-serif") : [];
+    const rowTextHeight = productLines.length * 32 + detailLines.length * 24;
+    const height = Math.max(66, rowTextHeight + 22);
+
+    return { item, productLines, detailLines, height };
+  });
+
+const getPaidReceiptInfoCellCount = (_order: Order) => 3;
+
+const getPaidReceiptCanvasHeight = (order: Order, receiptRows: ReceiptItemRow[]) => {
+  const infoBottom = RECEIPT_INFO_Y + Math.ceil(getPaidReceiptInfoCellCount(order) / 2) * 86;
+  const tableBottom = infoBottom + 28 + 54 + receiptRows.reduce((sum, row) => sum + row.height, 0);
+  const totalBottom = tableBottom + 28 + RECEIPT_TOTAL_HEIGHT;
+  const paymentBottom = totalBottom + 24 + 94;
+  const footerBottom = paymentBottom + 24 + 86;
+
+  return Math.max(RECEIPT_MIN_HEIGHT, footerBottom + 72);
+};
+
+const drawPaidReceiptInfo = (context: CanvasRenderingContext2D, order: Order, y: number, assets?: ReceiptAssets) => {
+  const infoX = RECEIPT_CARD_X + RECEIPT_INSET;
+  const infoWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
+  const columnWidth = infoWidth / 2;
+  const rowHeight = 86;
+  const infoHeight = rowHeight * 2;
+  const receiptDate = getReceiptDateSource(order);
+  const customer = getReceiptCustomer(order);
+
+  drawReceiptDashedLine(context, infoX, y - 14, infoX + infoWidth, y - 14);
+  drawReceiptDashedLine(context, infoX, y + rowHeight - 1, infoX + columnWidth, y + rowHeight - 1);
+  drawReceiptDashedLine(context, infoX, y + infoHeight - 1, infoX + infoWidth, y + infoHeight - 1);
+  drawReceiptDashedLine(context, infoX + columnWidth, y + 8, infoX + columnWidth, y + infoHeight - 8);
+
+  drawReceiptInfoCell(context, "calendar", "DATA:", formatShareDate(receiptDate), infoX, y, columnWidth, rowHeight, assets);
+  drawReceiptInfoCell(context, "table", "MESA:", getMesaValue(order), infoX, y + rowHeight, columnWidth, rowHeight, assets);
+  drawReceiptInfoCell(
+    context,
+    "user",
+    "CLIENTE:",
+    customer || "Cliente n\u00e3o informado",
+    infoX + columnWidth + 34,
+    y,
+    columnWidth - 34,
+    infoHeight,
+    assets,
+  );
+
+  return y + infoHeight;
+};
+
+const drawPaidReceiptPayment = (context: CanvasRenderingContext2D, order: Order, y: number) => {
+  const payment = getPaymentMethodLabel(order);
+  const boxX = RECEIPT_CARD_X + RECEIPT_INSET;
+  const boxWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
+  const columnWidth = boxWidth / 2;
+  const height = 94;
+  const labelY = y + 24;
+  const valueY = y + 55;
+
+  drawReceiptDashedLine(context, boxX, y, boxX + boxWidth, y);
+
+  if (payment) {
+    drawReceiptIcon(context, "card", boxX + 28, y + 22);
+    drawText(context, "FORMA DE PAGAMENTO:", boxX + 104, labelY, {
+      font: RECEIPT_META_LABEL_FONT,
+      color: RECEIPT_NAVY,
+    });
+    drawText(context, payment, boxX + 104, valueY, {
+      font: RECEIPT_META_VALUE_FONT,
+      color: "#071126",
+    });
+
+    drawReceiptDashedLine(context, boxX + columnWidth, y + 14, boxX + columnWidth, y + height - 16);
+    drawReceiptCheck(context, boxX + columnWidth + 42, y + 22, 52, RECEIPT_BLUE);
+    drawText(context, "SITUA\u00c7\u00c3O:", boxX + columnWidth + 118, labelY, {
+      font: RECEIPT_META_LABEL_FONT,
+      color: RECEIPT_NAVY,
+    });
+    drawText(context, "PAGO", boxX + columnWidth + 118, valueY, {
+      font: RECEIPT_META_LABEL_FONT,
+      color: "#118b2d",
+    });
+  } else {
+    drawReceiptCheck(context, boxX + boxWidth / 2 - 116, y + 22, 52, RECEIPT_BLUE);
+    drawText(context, "SITUA\u00c7\u00c3O:", boxX + boxWidth / 2 - 42, labelY, {
+      font: RECEIPT_META_LABEL_FONT,
+      color: RECEIPT_NAVY,
+    });
+    drawText(context, "PAGO", boxX + boxWidth / 2 - 42, valueY, {
+      font: RECEIPT_META_LABEL_FONT,
+      color: "#118b2d",
+    });
+  }
+
+  return y + height;
+};
+
+const drawPaidReceiptVisual = (
+  context: CanvasRenderingContext2D,
+  order: Order,
+  receiptRows: ReceiptItemRow[],
+  assets: ReceiptAssets,
+  canvasHeight: number,
+) => {
+  drawReceiptBackground(context, canvasHeight, assets.background);
+  drawReceiptLogo(context, assets.logo);
+  drawReceiptTitleBandImage(context, assets.titleBand, RECEIPT_TITLE_Y, RECEIPT_TITLE_HEIGHT);
+
+  const infoBottom = drawPaidReceiptInfo(context, order, RECEIPT_INFO_Y, assets);
+  const tableBottom = drawReceiptTable(context, receiptRows, infoBottom + 28);
+  const totalBottom = drawReceiptTotal(context, order, tableBottom + 28);
+  const paymentBottom = drawPaidReceiptPayment(context, order, totalBottom + 24);
+  drawReceiptThanksBandImage(context, assets.thanksBand, paymentBottom + 24, 70);
+};
+
 const createScaledCanvas = (canvasHeight: number) => {
   const canvas = document.createElement("canvas");
   canvas.width = IMAGE_WIDTH * RENDER_SCALE;
@@ -736,6 +1542,21 @@ const exportCanvasAtImageWidth = (sourceCanvas: HTMLCanvasElement, canvasHeight:
   return canvas;
 };
 
+const createPngFileFromCanvas = async (canvas: HTMLCanvasElement, order: Order) => {
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((imageBlob) => {
+      if (imageBlob) {
+        resolve(imageBlob);
+        return;
+      }
+
+      reject(new Error("Nao foi possivel salvar a imagem da comanda."));
+    }, "image/png");
+  });
+
+  return new File([blob], getOrderShareFileName(order), { type: "image/png" });
+};
+
 export const createOrderShareImageFile = async (order: Order, _legacyLogoSrc: string) => {
   await waitForFonts();
 
@@ -744,6 +1565,19 @@ export const createOrderShareImageFile = async (order: Order, _legacyLogoSrc: st
 
   if (!measureContext) {
     throw new Error("Não foi possível preparar a imagem da comanda.");
+  }
+
+  if (isPaidReceipt(order)) {
+    const receiptRows = measurePaidReceiptRows(measureContext, order);
+    const canvasHeight = getPaidReceiptCanvasHeight(order, receiptRows);
+    const [{ canvas, context }, assets] = await Promise.all([
+      Promise.resolve(createScaledCanvas(canvasHeight)),
+      loadReceiptAssets(),
+    ]);
+
+    drawPaidReceiptVisual(context, order, receiptRows, assets, canvasHeight);
+    const finalCanvas = exportCanvasAtImageWidth(canvas, canvasHeight);
+    return createPngFileFromCanvas(finalCanvas, order);
   }
 
   const rows = measureRows(measureContext, order);
