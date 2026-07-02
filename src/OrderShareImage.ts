@@ -109,6 +109,12 @@ const getOriginalPrice = (item: OrderItem) => item.originalUnitPrice ?? item.pro
 
 const isPaidReceipt = (order: Order) => order.status === "Fechada";
 
+const usesReceiptShareLayout = (order: Order) => order.status === "Aberta" || isPaidReceipt(order);
+
+const getReceiptStatusLabel = (order: Order) => (isPaidReceipt(order) ? "PAGO" : "PENDENTE");
+
+const getReceiptStatusColor = (order: Order) => (isPaidReceipt(order) ? "#118b2d" : "#b87900");
+
 const getReceiptDateSource = (order: Order) => order.closedAt || order.openedAt;
 
 const getReceiptNumber = (order: Order) => {
@@ -1332,6 +1338,8 @@ const drawReceiptTotal = (context: CanvasRenderingContext2D, order: Order, y: nu
 
 const drawReceiptPayment = (context: CanvasRenderingContext2D, order: Order, y: number) => {
   const payment = getPaymentMethodLabel(order);
+  const statusLabel = getReceiptStatusLabel(order);
+  const statusColor = getReceiptStatusColor(order);
   const boxX = RECEIPT_CARD_X + RECEIPT_INSET;
   const boxWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
   const columnWidth = boxWidth / 2;
@@ -1352,14 +1360,18 @@ const drawReceiptPayment = (context: CanvasRenderingContext2D, order: Order, y: 
   }
 
   drawReceiptDashedLine(context, boxX + columnWidth, y + 14, boxX + columnWidth, y + height - 16);
-  drawReceiptCheck(context, boxX + columnWidth + 42, y + 22, 52, RECEIPT_BLUE);
+  if (isPaidReceipt(order)) {
+    drawReceiptCheck(context, boxX + columnWidth + 42, y + 22, 52, RECEIPT_BLUE);
+  } else {
+    drawReceiptIcon(context, "clock", boxX + columnWidth + 45, y + 24);
+  }
   drawText(context, "SITUA\u00c7\u00c3O:", boxX + columnWidth + 118, y + 25, {
     font: "900 24px Arial Black, sans-serif",
     color: RECEIPT_NAVY,
   });
-  drawText(context, "PAGO", boxX + columnWidth + 118, y + 56, {
+  drawText(context, statusLabel, boxX + columnWidth + 118, y + 56, {
     font: "900 25px Arial Black, sans-serif",
-    color: "#118b2d",
+    color: statusColor,
   });
 
   return y + height;
@@ -1446,6 +1458,8 @@ const drawPaidReceiptInfo = (context: CanvasRenderingContext2D, order: Order, y:
 
 const drawPaidReceiptPayment = (context: CanvasRenderingContext2D, order: Order, y: number) => {
   const payment = getPaymentMethodLabel(order);
+  const statusLabel = getReceiptStatusLabel(order);
+  const statusColor = getReceiptStatusColor(order);
   const boxX = RECEIPT_CARD_X + RECEIPT_INSET;
   const boxWidth = RECEIPT_CARD_WIDTH - RECEIPT_INSET * 2;
   const columnWidth = boxWidth / 2;
@@ -1467,24 +1481,32 @@ const drawPaidReceiptPayment = (context: CanvasRenderingContext2D, order: Order,
     });
 
     drawReceiptDashedLine(context, boxX + columnWidth, y + 14, boxX + columnWidth, y + height - 16);
-    drawReceiptCheck(context, boxX + columnWidth + 42, y + 22, 52, RECEIPT_BLUE);
+    if (isPaidReceipt(order)) {
+      drawReceiptCheck(context, boxX + columnWidth + 42, y + 22, 52, RECEIPT_BLUE);
+    } else {
+      drawReceiptIcon(context, "clock", boxX + columnWidth + 45, y + 24);
+    }
     drawText(context, "SITUA\u00c7\u00c3O:", boxX + columnWidth + 118, labelY, {
       font: RECEIPT_META_LABEL_FONT,
       color: RECEIPT_NAVY,
     });
-    drawText(context, "PAGO", boxX + columnWidth + 118, valueY, {
+    drawText(context, statusLabel, boxX + columnWidth + 118, valueY, {
       font: RECEIPT_META_LABEL_FONT,
-      color: "#118b2d",
+      color: statusColor,
     });
   } else {
-    drawReceiptCheck(context, boxX + boxWidth / 2 - 116, y + 22, 52, RECEIPT_BLUE);
+    if (isPaidReceipt(order)) {
+      drawReceiptCheck(context, boxX + boxWidth / 2 - 116, y + 22, 52, RECEIPT_BLUE);
+    } else {
+      drawReceiptIcon(context, "clock", boxX + boxWidth / 2 - 113, y + 24);
+    }
     drawText(context, "SITUA\u00c7\u00c3O:", boxX + boxWidth / 2 - 42, labelY, {
       font: RECEIPT_META_LABEL_FONT,
       color: RECEIPT_NAVY,
     });
-    drawText(context, "PAGO", boxX + boxWidth / 2 - 42, valueY, {
+    drawText(context, statusLabel, boxX + boxWidth / 2 - 42, valueY, {
       font: RECEIPT_META_LABEL_FONT,
-      color: "#118b2d",
+      color: statusColor,
     });
   }
 
@@ -1567,7 +1589,7 @@ export const createOrderShareImageFile = async (order: Order, _legacyLogoSrc: st
     throw new Error("Não foi possível preparar a imagem da comanda.");
   }
 
-  if (isPaidReceipt(order)) {
+  if (usesReceiptShareLayout(order)) {
     const receiptRows = measurePaidReceiptRows(measureContext, order);
     const canvasHeight = getPaidReceiptCanvasHeight(order, receiptRows);
     const [{ canvas, context }, assets] = await Promise.all([
